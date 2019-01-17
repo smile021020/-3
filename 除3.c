@@ -5,7 +5,7 @@ int main()
 	int input=0,i=0;
 
 	scanf("%d",&input);
-	for(i=input;i>=input-2;i--)//§ä¥X³Ìªñªº3ªº­¿¼Æ
+	for(i=input;i>=input-2;i--)//æ‰¾å‡ºæœ€è¿‘çš„3çš„å€æ•¸
 	{
     	if(i%3)
             continue;
@@ -13,7 +13,6 @@ int main()
             break;
 	}
 	printf("%d\n",i/3*(3+i)/2);
-	//cout<<i/3*(3+i)/2<<endl;//±o¨ìÁ`©M(µ¥®t¯Å¼Æ©M¤½¦¡)
-	system("pause");
+	//å¾—åˆ°ç¸½å’Œ(ç­‰å·®ç´šæ•¸å’Œå…¬å¼)
 	return 0;
 }
