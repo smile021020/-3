@@ -2,25 +2,23 @@
 int main()
 {
     int i;
-	int input=0,Bin[8];
+	int input=0,array[8];
 
 	scanf("%d",&input);
 	if(input<0)
-        input+=256;                 //­t¼Æshift¨ì¥¿¼Æ
+        input+=256;                 //è² æ•¸shiftåˆ°æ­£æ•¸
 
-	for(i=7;i>=0;i--)               //¦]¬°³Ì«á¨º¶µ¬O§Ú­Ì¤G¶i¦ìªº²Ä¤@­Ó
+	for(i=7;i>=0;i--)               //å› ç‚ºæœ€å¾Œé‚£é …æ˜¯æˆ‘å€‘äºŒé€²ä½çš„ç¬¬ä¸€å€‹
     {
-    	Bin[i]=input%2;             //ºCºC¦s¤J0©Î1
-    	input/=2;                   //»İ­n¥Lªº°ÓÄ~Äò©¹¤Uºâ
+    	array[i]=input%2;             //æ…¢æ…¢å­˜å…¥0æˆ–1
+    	input/=2;                   //éœ€è¦ä»–çš„å•†ç¹¼çºŒå¾€ä¸‹ç®—
     }
     for(i=0;i<8;i++)
     {
     	if(i==7)
-            printf("%d\n",Bin[i]);
-            //cout<<Bin[i]<<endl;     //­Y¬°³Ì«á¤@¦ì«h´«¦æ
+            printf("%d\n",array[i]);      //è‹¥ç‚ºæœ€å¾Œä¸€ä½å‰‡æ›è¡Œ
     	else
-            printf("%d",Bin[i]);
-            //cout<<Bin[i];//§_«hºò±µ¦b«á¿é¥X
+            printf("%d",array[i]);	//å¦å‰‡ç·Šæ¥åœ¨å¾Œè¼¸å‡º
     }
 	return 0;
 }
