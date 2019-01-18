@@ -35,8 +35,6 @@ int main()
                 nSu+=in*2.1;
             }
 		printf("Summer months:%.2f\n",Su);
-		//cout<<fixed<<setprecision(2)<<"Summer months:"<<Su<<endl;
 		printf("Non-Summer months:%.2f\n",nSu);
-		//cout<<fixed<<setprecision(2)<<"Non-Summer months:"<<nSu<<endl;
 	return 0;
 }
