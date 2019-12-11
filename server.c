@@ -1,259 +1,412 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <errno.h>
-#include <string.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <netdb.h>
-#include <arpa/inet.h>
-#include <sys/wait.h>
-#include <signal.h>
-#include <fcntl.h>
-#define PORT "80"  // 提供給使用者連線的 port
-#define BACKLOG 10 // 有多少個特定的連線佇列（pending connections queue）
-#define BUFSIZE 8096
+#include<time.h>
+#include<stdio.h>
+#include<stdlib.h>
+#include<unistd.h>
+#include<sys/socket.h>
+#include<netinet/in.h>
+#include<string.h>
+#include<pthread.h>
 
-struct
+#define MAXLINE 512
+#define MAXMEM 10
+#define NAMELEN 20
+#define SERV_PORT 8080
+#define LISTENQ 5
+
+int listenfd,connfd[MAXMEM];
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+char user[MAXMEM][NAMELEN];
+void Quit();
+void rcv_snd(int n);
+
+typedef enum TicTacToeState{
+
+	TTTS_Default = 0,
+	TTTS_O = 1,
+	TTTS_X = 2,
+}TTTS;
+
+TTTS array[3][3] = {TTTS_Default};
+
+void Print(TTTS array[][3])
 {
-    char *ext;
-    char *filetype;
-} extensions[] = {
-    {"gif", "image/gif"},
-    {"jpg", "image/jpeg"},
-    {"jpeg", "image/jpeg"},
-    {"png", "image/png"},
-    {"zip", "image/zip"},
-    {"gz", "image/gz"},
-    {"tar", "image/tar"},
-    {"htm", "text/html"},
-    {"html", "text/html"},
-    {"exe", "text/plain"},
-    {0, 0}};
-void receive_file(int fd, char *buffer, char *receive_file_name)
-{
-    char name[100] = "./receive_file/";
-    char revbuf[BUFSIZE], *tmp;
-    int ret;
-    strcpy(revbuf, buffer);
-    strcat(name, receive_file_name);
-    printf("Received file is stored at %s...\n", name);
+	printf("\n");
+	for(int i = 0;i < 3;i++)
+	{
 
-    FILE *fptr = fopen(name, "w");
-    if (fptr == NULL)
-    {
-        printf("File %s Cannot be opened file on server...\n", name);
-        return;
-    }
+		for(int j = 0;j < 3;j++)
+		{
 
-    int content_length = atoi(strstr(revbuf, "Content-Length: ") + strlen("Content-Length: "));
-    char boundary[100] = "--";
-    strcat(boundary, strstr(revbuf, "boundary=") + strlen("boundary="));
-    tmp = strstr(boundary, "\r");
-    *tmp = '\0';
-    while (1)
-    {
-        char *tmp, *ptr;
-        int len;
-        if ((tmp = strstr(revbuf, "Content-Type: ")) != NULL)
-        {
-            if ((ptr = strstr(tmp + strlen("Content-Type: "), "Content-Type: ")) != NULL)
-                tmp = strstr(ptr, "\r\n\r\n") + strlen("\r\n\r\n");
-            else if (ptr == NULL)
-            {
-                if ((ptr = strstr(tmp, "\r\n\r\n")) != NULL)
-                    tmp = ptr + strlen("\r\n\r\n");
-                else
-                    tmp = revbuf + strlen(revbuf);
-            }
-        }
-        else
-            tmp = revbuf;
-        /* tmp 存檔案開始 */
-        /* ptr 存檔案結尾 */
-        ptr = strstr(tmp, boundary);
-        if (ptr == NULL)
-            len = strlen(tmp);
-        else
-            len = ptr - tmp - 2;
-
-        int write_sz = fwrite(tmp, sizeof(char), len, fptr);
-        // write(fd, tmp, write_sz);
-        if (ptr != NULL)
-            break;
-        memset(revbuf, 0, sizeof(revbuf));
-        read(fd, revbuf, BUFSIZE);
-    }
-    fclose(fptr);
-    printf("Received file from client Successful!\n\n\n");
-    int index = open("success.html", O_RDONLY);
-    char filebuffer[10000];
-    int indexlen = read(index, filebuffer, 10000);
-    write(fd, filebuffer, indexlen);
-}
-void handle_socket(int fd)
-{
-    int j, file_fd, buflen, len;
-    long i, ret;
-    char *fstr;
-    static char buffer[BUFSIZE + 1];
-    char *receive_file_name, *tmp;
-
-    ret = read(fd, buffer, BUFSIZE); /* 讀取瀏覽器要求 */
-    // printf("buffer = \n%s", buffer);
-    if ((tmp = strstr(buffer, "filename=")) != NULL) /* 取得封包內檔名 */
-    {
-        receive_file_name = strdup(tmp + 10);
-        tmp = strstr(receive_file_name, "\"");
-        *tmp = '\0';
-        receive_file(fd, buffer, receive_file_name); /* 擷取封包中的檔案 */
-        return;
-    }
-    if (ret == 0 || ret == -1)
-    {
-        /* 網路連線有問題，所以結束行程 */
-        exit(3);
-    }
-
-    /* 程式技巧：在讀取到的字串結尾補空字元，方便後續程式判斷結尾 */
-    if (ret > 0 && ret < BUFSIZE)
-        buffer[ret] = 0;
-    else
-        buffer[0] = 0;
-
-    /* 移除換行字元 */
-    for (i = 0; i < ret; i++)
-        if (buffer[i] == '\r' || buffer[i] == '\n')
-            buffer[i] = 0;
-
-    /* 只接受 GET 命令要求 */
-    if (strncmp(buffer, "GET ", 4) && strncmp(buffer, "get ", 4))
-        exit(3);
-
-    /* 我們要把 GET /index.html HTTP/1.0 後面的 HTTP/1.0 用空字元隔開 */
-    for (i = 4; i < BUFSIZE; i++)
-    {
-        if (buffer[i] == ' ')
-        {
-            buffer[i] = 0;
-            break;
-        }
-    }
-
-    /* 當客戶端要求根目錄時讀取 index.html */
-    if (!strncmp(&buffer[0], "GET /\0", 6) || !strncmp(&buffer[0], "get /\0", 6))
-        strcpy(buffer, "GET /index.html\0");
-
-    /* 檢查客戶端所要求的檔案格式 */
-    buflen = strlen(buffer);
-    fstr = (char *)0;
-
-    for (i = 0; extensions[i].ext != 0; i++)
-    {
-        len = strlen(extensions[i].ext);
-        if (!strncmp(&buffer[buflen - len], extensions[i].ext, len))
-        {
-            fstr = extensions[i].filetype;
-            break;
-        }
-    }
-
-    /* 檔案格式不支援 */
-    if (fstr == 0)
-    {
-        fstr = extensions[i - 1].filetype;
-    }
-
-    /* 開啟檔案 */
-    if ((file_fd = open(&buffer[5], O_RDONLY)) == -1)
-    {
-        write(fd, "Failed to open file", 19);
-    }
-
-    /* 傳回瀏覽器成功碼 200 和內容的格式 */
-    sprintf(buffer, "HTTP/1.0 200 OK\r\nContent-Type: %s\r\n\r\n", fstr);
-    write(fd, buffer, strlen(buffer));
-
-    /* 讀取檔案內容輸出到客戶端瀏覽器 */
-    while ((ret = read(file_fd, buffer, BUFSIZE)) > 0)
-    {
-        write(fd, buffer, ret);
-    }
-
-    exit(1);
+			if(array[i][j] == TTTS_Default)
+				printf("-");		
+			else if(array[i][j] == TTTS_O)
+				printf("O");
+			else
+				printf("X");
+		}
+		printf("\n");
+	}
+	printf("\n");
 }
 
-void sigchld_handler(int s)
+TTTS CheckWin(TTTS array[][3])
 {
-    while (waitpid(-1, NULL, WNOHANG) > 0)
-        ;
+
+	for(int i = 0;i < 3;i++)
+		if(array[i][0] == array[i][1] && 
+				array[i][0] == array[i][2] &&
+				array[i][0] != TTTS_Default)
+			return array[i][0];
+	for(int j = 0;j < 3;j++)
+		if(array[0][j] == array[1][j] &&
+				array[0][j]== array[2][j] && 
+				array[0][j] != TTTS_Default)
+			return array[0][j];
+	if(array[0][0] == array[1][1] &&
+			array[0][0] == array[2][2] &&
+			array[0][0] != TTTS_Default)
+		return array[0][0];
+	if(array[0][2] == array[1][1] &&
+			array[0][2] == array[2][0] &&
+			array[0][2] != TTTS_Default)
+		return array[0][2];
+
+	return TTTS_Default;
 }
 
-int main(void)
+int main()
 {
+	pthread_t thread;
+	struct sockaddr_in serv_addr, cli_addr;
+	socklen_t length;
+	char buff[MAXLINE];
 
-    int sockfd, new_fd; // 在 sock_fd 進行 listen，new_fd 是新的連線
-    struct addrinfo hints, *servinfo, *p;
-    struct sockaddr_storage their_addr; // 連線者的位址資訊
-    socklen_t sin_size;
-    struct sigaction sa;
-    int yes = 1;
-    char s[INET6_ADDRSTRLEN];
-    int rv;
+	//用socket建server的fd
+	listenfd = socket(AF_INET, SOCK_STREAM, 0);
 
-    memset(&hints, 0, sizeof hints);
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
-    hints.ai_flags = AI_PASSIVE; // 使用我的 IP
-    hints.ai_protocol = 0;
+	if(listenfd < 0) {
+		printf("Socket created failed.\n");
+		return -1;
+	}
+	//網路連線設定
+	serv_addr.sin_family = AF_INET;
+	serv_addr.sin_port = htons(SERV_PORT);	//port80
+	serv_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+	//用bind開監聽器
+	if(bind(listenfd, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) < 0) {
+		printf("Bind failed.\n");
+		return -1;
+	}
+	//用listen開始監聽
+	printf("listening...\n");
+	listen(listenfd, LISTENQ);
 
-    getaddrinfo(NULL, PORT, &hints, &servinfo);
+	//建立thread管理server
+	pthread_create(&thread, NULL, (void*)(&Quit), NULL);
 
-    sockfd = socket(servinfo->ai_family, servinfo->ai_socktype, servinfo->ai_protocol);
+	//紀錄閒置的client(-1)
+	//initialize
+	int i=0;
+	for(i=0; i<MAXMEM; i++) {
+		connfd[i]=-1;
+	}
+	memset(user, '\0', sizeof(user));
+	printf("initialize...\n");
 
-    setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int));
+	while(1) {
+		length = sizeof(cli_addr);
+		for(i=0; i<MAXMEM; i++) {
+			if(connfd[i]==-1) {
+				break;
+			}
+		}
+		//等待client端連線
+		printf("receiving...\n");
+		connfd[i] = accept(listenfd, (struct sockaddr*)&cli_addr, &length);
 
-    if (bind(sockfd, servinfo->ai_addr, servinfo->ai_addrlen) == -1)
-    {
-        perror("bind");
-        exit(1);
-    }
+		//對新client建thread，以開啟訊息處理
+		pthread_create(malloc(sizeof(pthread_t)), NULL, (void*)(&rcv_snd), (void*)i);
+	}
 
-    freeaddrinfo(servinfo);
+	return 0;
+}
+//關閉server
+void Quit()
+{
+	char msg[10];
+	while(1) {
+		scanf("%s", msg);
+		if(strcmp("/quit",msg)==0) {
+			printf("Bye~\n");
+			close(listenfd);
+			exit(0);
+		}
+	}
+}
 
-    listen(sockfd, BACKLOG);
+void rcv_snd(int n)
+{
+	char msg_notify[MAXLINE];
+	char msg_recv[MAXLINE];
+	char msg_send[MAXLINE];
+	char who[MAXLINE];
+	char name[NAMELEN];
+	char message[MAXLINE];
 
-    sa.sa_handler = sigchld_handler; // 收拾全部死掉的 processes
-    sigemptyset(&sa.sa_mask);
-    sa.sa_flags = SA_RESTART;
+	char msg1[]="<SERVER> Who do you want to send? ";
+	char msg2[]="<SERVER> Complete.\n";
+	char msg3[]="<SERVER> Refuse to receive.";
+	char msg4[]="<SERVER> Download...\n";
+	char msg5[]="<SERVER> Confirm?";
+	char msg6[]="ok";
+	char msg7[]="<server> Please type the name of the player you want to against with";
+	char check[MAXLINE];
+	char ok[3];
 
-    sigaction(SIGCHLD, &sa, NULL);
+	int i=0,b_cnt=0;
+	int retval;
 
-    printf("server: waiting for connections...\n");
+	//獲得client的名字
+	int length;
+	length = recv(connfd[n], name, NAMELEN, 0);
+	if(length>0) {
+		name[length] = 0;
+		strcpy(user[n], name);
+	}
+	//告知所有人有新client加入
+	memset(msg_notify, '\0', sizeof(msg_notify));
+	strcpy(msg_notify, name);
+	strcat(msg_notify, " join\n");
+	for(i=0; i<MAXMEM; i++) {
+		if(connfd[i]!=-1) {
+			send(connfd[i], msg_notify, strlen(msg_notify), 0);
+		}
+	}
+	//接收某client的訊息並轉發
+	while(1) {
+		memset(msg_recv, '\0', sizeof(msg_recv));
+		memset(msg_send, '\0', sizeof(msg_send));
+		memset(message,'\0',sizeof(message));
+		memset(check,'\0',sizeof(check));
 
-    while (1) // 主要的 accept() 迴圈
-    {
-        sin_size = sizeof their_addr;
-        new_fd = accept(sockfd, (struct sockaddr *)&their_addr, &sin_size);
-        if (new_fd == -1)
-        {
-            perror("accept");
-            continue;
-        }
+		if((length=recv(connfd[n], msg_recv, MAXLINE, 0))>0) {
+			msg_recv[length]=0;
+			//輸入quit離開
+			if(strcmp("/quit\n", msg_recv)==0) {
+				connfd[n]=-1;
+				close(connfd[n]);
+				pthread_exit(&retval);
+			}
+			//輸入chat傳給特定人
+			else if(strncmp("/chat", msg_recv, 5)==0) {
+				printf("private message...\n");
+				send(connfd[n], msg1, strlen(msg1), 0);
+				length = recv(connfd[n], who, MAXLINE, 0);
+				who[length]=0;
+				strcpy(msg_send, who);
+				strcat(msg_send, ">");
+				msg_send[strlen(who)-1]='>';
+				send(connfd[n], msg_send, strlen(msg_send), 0);
+				length = recv(connfd[n], message, MAXLINE, 0);
+				message[length]=0;
 
-        if (!fork()) // 這個是 child process
-        {
+				strcpy(msg_send, name);
+				strcat(msg_send, ": ");
+				strcat(msg_send, message);
 
-            close(sockfd); // child 不需要 listener
-            handle_socket(new_fd);
-            close(new_fd);
+				for(i=0; i<MAXMEM; i++) {
+					if(connfd[i]!=-1) {
+						if(strncmp(who, user[i], strlen(who)-1)==0) {
+							send(connfd[i], msg_send, strlen(msg_send), 0);
+						}
+					}
+				}
+			}
+			else if(strncmp("/game", msg_recv, 5)==0){
+				int p1=0,p2=1;
+				send(connfd[n], msg7, strlen(msg7), 0);
+				length = recv(connfd[n], who, MAXLINE, 0);//got a name to fight
+				who[length]=0;
+				strcpy(msg_send,"Would you like to play a game with ");
+				strcat(msg_send,name);
+				strcat(msg_send,"(y/n)");
+				for(i=0; i<MAXMEM; i++) {
+					if(connfd[i]!=-1) {
+						if(strncmp(who, user[i], strlen(who)-1)==0) {
+							send(connfd[i], msg_send, strlen(msg_send), 0);
+							length = recv(connfd[i], message, MAXLINE, 0);
+						}
+					}
+				}
+				printf("a:%s\n",message);
+				if(strncmp(message, "Y", 1)==0 || strncmp(message, "y", 1)==0) {
+					printf("yes\n");
+ 
+					printf("Let's start the game:\n");
+				//	printf("please enter the position with the type of(x,y),ex:0 0\n");
+					strcpy(msg_send,"Let's start the game:\n");
+					for(i=0; i<MAXMEM; i++) {
+						if(connfd[i]!=-1) {
+							if(strncmp(who, user[i], strlen(who)-1)==0) {
+								send(connfd[i], msg_send, strlen(msg_send), 0);
+								p2=i;
+							}
+							else if(strncmp(name, user[i], strlen(name)-1)==0) {
+								send(connfd[i], msg_send, strlen(msg_send), 0);
+								p1=i;
+							}
 
-            exit(0);
-        }
+						}
+					}
+					strcpy(msg_send,"please enter the position with the type of(x,y),ex:0 0\n");
+					send(connfd[p1], msg_send, strlen(msg_send), 0);
+					send(connfd[p2], msg_send, strlen(msg_send), 0);
+					// TTTS array[3][3] = {TTTS_Default};
+					int index_x,index_y;
+					int counter = 0;
+					Print(array);
+					int flag=1,num1,num2,player1=p1,player2=p2;
+					while(1){
+						message[0]=0;
+						stop:
+						if(flag==1){
+							p1=0,p2=1;///
+							strcpy(msg_send,"It's your turn:'\n");
+							send(connfd[p1], msg_send, strlen(msg_send), 0);
+							length = recv(connfd[p1], message, MAXLINE, 0);
+							message[length]=0;
+							strcpy(msg_send, user[p1]);
+							strcat(msg_send, ": ");
+							strcat(msg_send, message);
+							send(connfd[p2], msg_send, strlen(msg_send), 0);
+							num1=atoi(message);
+							num2=atoi(message+2);
+							//printf("flag:%d num1,num2 p1 p2:%d %d %d %d\n",flag,num1,num2,p1,p2);
+							printf("----------------------\n");
+							flag=2;
+							//no exception solve
+						}
+						else {//if(flag==2)
+							p1=0,p2=1;///
+							//printf("flag:%d num1,num2 p1 p2:%d %d %d %d\n",flag,num1,num2,p1,p2);
+							printf("----------------------\n");
+							strcpy(msg_send,"It's your turn:\n");
+							send(connfd[p2], msg_send, strlen(msg_send), 0);
+							length = recv(connfd[p2], message, MAXLINE, 0);
+							message[length]=0;
+							strcpy(msg_send, user[p2]);
+							strcat(msg_send, ": ");
+							strcat(msg_send, message);
+							send(connfd[p1], msg_send, strlen(msg_send), 0);
+							num1=atoi(message);
+							num2=atoi(message+2);
+							// printf("flag:%d num1,num2 p1 p2:%d %d %d %d\n",flag,num1,num2,p1,p2);
+							flag=1;
 
-        close(new_fd); // parent 不需要這個
-    }
+						}
+						/*	strcpy(msg_send,"It's your turn:\n");
+							send(connfd[player2], msg_send, strlen(msg_send), 0);
+							length = recv(connfd[player2], message, MAXLINE, 0);
+							message[length]=0;
+							strcpy(msg_send, user[player2]);
+							strcat(msg_send, ": ");
+							strcat(msg_send, message);
+							send(connfd[player1], msg_send, strlen(msg_send), 0);
+							num1=atoi(message);
+							num2=atoi(message+2);
+							printf("player:%d num1,num2:%d %d\n",player2,num1,num2);
+						//	player2=1,player1=0;
+						//	flag=1;
+							if(player2==0){
+								player1=0;
+								player2=1;
+							}						
+							else {
+								player1=1;
+								player2=0;
+							}*/
+						array[num1][num2] = counter % 2 ? TTTS_O : TTTS_X; 
+						Print(array);
+						if(TTTS_O == CheckWin(array))
+						{
 
-    return 0;
+							strcpy(msg_send,user[p2]);
+							strcat(msg_send," win the game\n");
+							send(connfd[0], msg_send, strlen(msg_send), 0);
+							send(connfd[1], msg_send, strlen(msg_send), 0);
+							printf("game over,O win!!!!!\n");
+							break;
+						}
+						else if(TTTS_X == CheckWin(array))
+						{
+							strcpy(msg_send,user[p1]);
+							strcat(msg_send," win the game\n");
+							send(connfd[0], msg_send, strlen(msg_send), 0);
+							send(connfd[1], msg_send, strlen(msg_send), 0);
+							printf("game over,X win!!!!!\n");
+							break;
+						}	
+						counter++;//识别O和X
+						if(counter >= 9 )
+						{
+							strcpy(msg_send,"game over,draw game!\n");
+							send(connfd[p1], msg_send, strlen(msg_send), 0);
+							send(connfd[p2], msg_send, strlen(msg_send), 0);
+							printf("game over,draw game!\n");
+							break;
+						}
+
+					}
+				}
+				//No取消傳送
+				else if(strncmp(message, "N", 1)==0 || strncmp(message, "n", 1)==0) {
+					printf("no\n");
+
+					send(connfd[n], msg3, strlen(msg3), 0);
+					memset(message, '\0', sizeof(message));
+					
+				}
+			
+			}
+
+			//顯示目前在線
+			else if(strncmp("/list", msg_recv, 5)==0) {
+				strcpy(msg_send, "<SERVER> Online:");
+				for(i=0; i<MAXMEM; i++) {
+					if(connfd[i]!=-1) {
+						//	printf("onlineID:%d\n",i);
+						strcat(msg_send, user[i]);
+						strcat(msg_send, " ");
+					}
+				}
+				strcat(msg_send, "\n");
+				send(connfd[n], msg_send, strlen(msg_send), 0);
+			}
+			//直接傳給每個人
+			else {
+				b_cnt++;
+				printf("...please type again\n");
+				if(b_cnt>=0){
+					if(strcmp(msg_recv,"y\n")!=0&&strcmp(msg_recv,"n\n")!=0){
+						goto stop;
+					}
+					 
+				}
+			//
+				strcpy(msg_send, name);
+				strcat(msg_send,">>> ");
+				strcat(msg_send, msg_recv);
+
+				for(i=0;i<MAXMEM;i++) {
+					if(connfd[i]!=-1) {
+						if(strcmp(name, user[i])==0) {
+							continue;
+						}else {
+							send(connfd[i], msg_send, strlen(msg_send), 0);
+						}
+					}
+				}
+			}
+		}
+	}
 }
